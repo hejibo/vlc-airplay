@@ -1,31 +1,84 @@
+#!/usr/bin/python
+from daemon import Daemon
 from socket import *
-from sys import argv
+from subprocess import Popen
+import sys, re
+
+accepted = ['192.168.123.3']
+waiter_addr = ('192.168.123.2', 56662)
+stream_addr = ('192.168.123.2', 56672)
+defaultPath = '/home/var1able/%s'
+rFileName = re.compile('[^/]*.[a-zA-Z]{2,3}$')
+
+class airplayDaemon(Daemon):
+	def run(self):
+		sWaiter = socket(AF_INET, SOCK_DGRAM)
+		sWaiter.bind(waiter_addr)
+		while 1:
+			data, addr = sWaiter.recvfrom(256)
+
+			if addr[0] in accepted:
+				filename = re.findall(rFileName, data)[0]	
+				print data[15:27]
+				subtitle = 'subs.srt' if data[15:27] == 'y, subtitles' else ''
+
+				try:
+					stream = socket(AF_INET, SOCK_STREAM) #Creating streaming socket
+					stream.bind( stream_addr ) # Binding socket
+
+					sWaiter.sendto('Start, port 56672', (addr[0], 56662))
+
+					if subtitle:
+						print('Receiving subs')
+						stream.listen(1)
+						conn, addr = stream.accept() # Accepting connection
+						buff = open(defaultPath % subtitle, 'w+')
+						buff.seek(0)
+
+						while True:
+							frame = conn.recv(2048)
+							if not frame: break
+							buff.write(frame)
+
+						buff.flush()
+						buff.close()
+
+					stream.listen(1)
+					conn, addr = stream.accept() # Accepting connection
+					buff = open(defaultPath % filename, 'w+')
+					buff.seek(0)
+
+					dCount = 0
+					while True:
+						frame = conn.recv(2048)
+						if not frame: break
+						dCount += 1
+						buff.write(frame)
+						if dCount % 10 == 0: buff.flush()
+						if dCount == 200: Popen(['vlc', defaultPath % filename, 
+							'--sub-file=%s' % (defaultPath % subtitle)])
+
+				except:
+					sWaiter.sendto('Something bad happend, try again', (addr[0], 56662))
+
+					buff.close()
+					conn.close()
+					stream.close()
+
 
 if __name__ == '__main__':
-	sock = socket(AF_INET, SOCK_DGRAM)
-	sock.bind( ('192.168.123.3', 56662) )
-	args = ''.join(argv[1:])
-	if args == '': exit(0)
-	
-	sock.sendto('IMMA CHARGIN MAH AIRPLAY', ('192.168.123.2', 56662) )
-	
-	data, addr = sock.recvfrom(64)
-
-	if data == 'START AT PORT 56672':
-		stream = socket(AF_INET, SOCK_STREAM)
-		stream.connect(('192.168.123.2', 56672))
-		print('Connected!')
-
-		buff = open('%s' % args,'r')
-		buff.seek(0)
-		print('File opened, starting upload...')
-		while 1:
-			frame = buff.read(2048)
-			if not frame: break
-			stream.send(frame)
-
-		stream.close()
-		buff.close()
-		print('Upload finished!')
-
-	sock.close()
+	daemon = airplayDaemon('/tmp/airplay-daemon.pid')
+        if len(sys.argv) == 2:
+                if 'start' == sys.argv[1]:
+                        daemon.start()
+                elif 'stop' == sys.argv[1]:
+                        daemon.stop()
+                elif 'restart' == sys.argv[1]:
+                        daemon.restart()
+                else:
+                        print "Unknown command"
+                        sys.exit(2)
+                sys.exit(0)
+        else:
+                print "usage: %s start|stop|restart" % sys.argv[0]
+                sys.exit(2)
