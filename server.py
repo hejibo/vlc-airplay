@@ -1,77 +1,59 @@
-#!/usr/bin/python
-from daemon import Daemon
+#!/usr/bin/env python
+from __future__ import with_statement
 from socket import *
-from subprocess import Popen
-import threading
-import sys, re
+from daemon import Daemon
+import os, sys, json, threading
 
-accepted = ['192.168.123.3']
-waiter_addr = ('192.168.123.2', 56663)
-stream_addr = ('192.168.123.2', 56672)
-defaultPath = '/home/var1able/%s'
-rFileName = re.compile('[^/]*.[a-zA-Z]{2,3}$')
+saveDir = '/home/var1able/airplay/%s'
 
 class dAirplay(Daemon):
 	def run(self):
-		sWaiter = socket(AF_INET, SOCK_DGRAM)
-		sWaiter.bind(waiter_addr)
-		while 1:
-			data, addr = sWaiter.recvfrom(256)
+		try:
+			sock = socket(AF_INET, SOCK_DGRAM)
+			sock.bind( ('0.0.0.0', 56662) )
 
-			receiveStream(sWaiter, addr, data)
+			strmSock = socket(AF_INET, SOCK_STREAM)
+			strmSock.bind( ('0.0.0.0', 56673) )
 
-	def receiveStream(sWaiter, addr, data):
-		if addr[0] in accepted:
-			filename = re.findall(rFileName, data)[0]	
-			print data[15:27]
-			subtitle = 'subs.srt' if data[15:27] == 'y, subtitles' else ''
-			try:
-				stream = socket(AF_INET, SOCK_STREAM) #Creating streaming socket
-				stream.bind( stream_addr ) # Binding socket
-				sWaiter.sendto('Start, port 56672', (addr[0], 56662))
-				if subtitle:
-					print('Receiving subs')
-					stream.listen(1)
-					conn, addr = stream.accept() # Accepting connection
-					buff = open(defaultPath % subtitle, 'w+')
-					buff.seek(0)
-					while True:
-						frame = conn.recv(2048)
-						if not frame: break
-						buff.write(frame)
-						buff.flush()
-					buff.close()
-					conn.close()
-				conn, addr = stream.accept() # Accepting connection
-				buff = open(defaultPath % filename, 'w+')
-				buff.seek(0)
-				dCount = 0
-				while True:
-					frame = conn.recv(2048)
-					if not frame: break
-					dCount += 1
-					buff.write(frame)
-					if dCount % 10 == 0: buff.flush()
-					if dCount == 200: Popen(['vlc', defaultPath % filename, 
-						'--sub-file=%s' % (defaultPath % subtitle)])
+			while True:
+				data, addr = sock.recvfrom(256)
+				receiveFile(data, addr, sock, strmSock)
+		finally:
+			strmSock.close()
+			sock.close()
 
-			except:
-				sWaiter.sendto('Something bad happend, try again', (addr[0], 56662))
-				buff.close()
-				conn.close()
-				stream.close()
+def receiveFile(data, addr, sock, strmSock):
+	data = json.loads(data)
+	fName, fSize, fType = data['name'], data['size'], data['content']
 
+	with open( saveDir % fName, 'w+' ) as wBuffer:
+		wBuffer.seek(0)
+		pCount = 0
+		sock.sendto('{"response": 200}', addr)
 
-class tReceive(threading.Thread):
-	def run(self):
-		pass
+		strmSock.listen(2)
+		try:
+			conn, addr = strmSock.accept()
+
+			while not False:
+				data = conn.recv(2048)
+				pCount += 1
+				if not data:
+					break
+				wBuffer.write(data)
+				if pCount % 10: wBuffer.flush() 
+
+			wBuffer.flush()
+
+		finally:
+			conn.close()
 
 if __name__ == '__main__':
 	daemon = dAirplay('/tmp/airplay-daemon.pid')
         if len(sys.argv) == 2:
                 if 'start' == sys.argv[1]:
-                        #daemon.start()
-                        daemon.run()
+                        daemon.start()
+                        #daemon.run()
                 elif 'stop' == sys.argv[1]:
                         daemon.stop()
                 elif 'restart' == sys.argv[1]:

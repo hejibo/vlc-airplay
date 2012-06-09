@@ -1,51 +1,53 @@
-#!/usr/bin/python
+#!/usr/bin/env python
+from __future__ import with_statement
+import os
 from socket import *
 from sys import argv
 
-udpAddr = ('192.168.123.2', 56662)
-tcpAddr = ('192.168.123.2', 56672)
+remoteAddr = '192.168.123.2'
+udpAddr = ( remoteAddr, 56662 )
+tcpAddr = ( remoteAddr, 56673 )
+
+def sendFile(path, content):
+	sock = socket(AF_INET, SOCK_DGRAM)
+	sock.settimeout(16)
+	sock.bind( ('0.0.0.0', 56662) )
+
+	fName = path.split('/')[-1]
+	fSize = os.path.getsize(path)
+
+	header = '{"name": "%s", "size": %s, "content": "%s"}' % (fName, fSize, content)
+	print('Trying to connect, header: %s' % header)
+	sock.sendto( header, udpAddr )
+
+	try:
+		data, addr = sock.recvfrom(64)
+	except:
+		print('Connection timed out')
+		return
+	
+	if data == '{"response": 200}':
+		with open( path, 'r' ) as rBuffer:
+			try:
+				strmSock = socket(AF_INET, SOCK_STREAM)
+				strmSock.connect( tcpAddr )
+				rBuffer.seek(0)
+
+				while not False:
+					data = rBuffer.read(2048)
+					if not data: 
+						break
+					strmSock.send(data)
+
+			finally:
+				strmSock.close()
 
 if __name__ == '__main__':
-	sock = socket(AF_INET, SOCK_DGRAM)
-	sock.bind( ('192.168.123.3', 56662) )
-	filename = argv[1]
-	subtitles = argv[2] if len(argv) == 3 else ''
-	if filename == '': exit(0)
-	
-	if subtitles == '': 
-		sock.sendto('Starting airplay: %s' % filename, udpAddr )
-	else:
-		sock.sendto('Starting airplay, subtitles: %s' % filename, udpAddr )
-	
-	data, addr = sock.recvfrom(64)
+	fVideo = argv[1]
+	fSubtitle = argv[2] if len(argv) > 2 else ''
 
-	if data == 'Start, port 56672':
-		if subtitles != '':
-			stream = socket(AF_INET, SOCK_STREAM)
-			stream.connect(tcpAddr)
-			buff = open('%s' % subtitles, 'r')
-			buff.seek(0)
+	if os.path.isfile(fSubtitle):
+		sendFile(path = fSubtitle, content = 'subtitle')
 
-			while 1:
-				frame = buff.read(2048)
-				if not frame: break
-				stream.send(frame)
-
-			buff.close()
-			stream.close()
-
-		stream = socket(AF_INET, SOCK_STREAM)
-		stream.connect(tcpAddr) 
-		buff = open('%s' % filename,'r')
-		buff.seek(0)
-		print('File opened, starting upload...')
-		while 1:
-			frame = buff.read(2048)
-			if not frame: break
-			stream.send(frame)
-
-		stream.close()
-		buff.close()
-		print('Upload finished!')
-
-	sock.close()
+	if os.path.isfile(fVideo):
+		sendFile(path = fVideo, content = 'video')
